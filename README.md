@@ -45,53 +45,6 @@ It features a **Rich CLI**, **Smart WAF Detection**, **Discord Integration**, an
 ## 🛠️ Installation
 
 ### 1. Clone the Repository
-<h1 align="center">
-  <br>
-  <a href="https://github.com/DeftonesL/Reconpy">
-    <img src="https://img.shields.io/badge/Reconpy-v2.2-00ff41?style=for-the-badge&logo=appveyor" alt="Reconpy">
-  </a>
-</h1>
-
-<h4 align="center">🚀 The Next-Generation Automated Reconnaissance Framework.</h4>
-
-<p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-usage">Usage</a> •
-  <a href="#-workflow">Workflow</a> •
-  <a href="#-disclaimer">Disclaimer</a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.x-blue?style=flat-square&logo=python">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square">
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey?style=flat-square">
-  <img src="https://img.shields.io/badge/Maintenance-Active-success?style=flat-square">
-</p>
-
----
-
-## 📖 Overview
-
-**Reconpy** is an intelligent, automated reconnaissance tool built for Penetration Testers and Bug Bounty Hunters. It automates the boring stuff (subdomain enumeration, filtering, live probing) and moves directly to vulnerability scanning using a smart workflow.
-
-It features a **Rich CLI**, **Smart WAF Detection**, **Discord Integration**, and **HTML Reporting**.
-
-## ✨ Features
-
-* **🎨 Rich UI:** Beautiful console output with progress bars and spinners using `Rich` library.
-* **🧠 Smart WAF Detection:** Detects Cloudflare, Akamai, and Sucuri automatically and adjusts scan speed to avoid IP bans.
-* **🔔 Discord Alerts:** Sends real-time notifications to your Discord channel when vulnerabilities are found.
-* **📊 HTML Reporting:** Generates a clean HTML dashboard with all findings.
-* **⚡ Speed Control:** Full control over threads and rate limits.
-* **📂 Flexible Input:** Supports single targets (`-t`) or list of targets (`-l`).
-* **🛡️ Tool Chaining:** seamlessly integrates `Subfinder`, `Assetfinder`, `Httpx`, and `Nuclei`.
-
----
-
-## 🛠️ Installation
-
-### 1. Clone the Repository
 ```bash
 git clone [https://github.com/DeftonesL/Reconpy.git](https://github.com/DeftonesL/Reconpy.git)
 cd Reconpy
