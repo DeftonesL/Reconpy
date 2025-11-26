@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-🚀 ApexRecon - The Next Gen Recon Tool
+🚀 ApexRecon v2.2 - Ultimate Recon Framework
 Author: Saleh
-Features: Rich UI, WAF Detection, Discord Alerts, HTML Reporting.
+Updates: List support, Argument flexibility, Speed control.
 """
 
 import os
@@ -12,25 +12,22 @@ import sys
 import subprocess
 import argparse
 import requests
-import shutil
 from datetime import datetime
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.style import Style
 
-# إعداد الكونسول الجميل
 console = Console()
 
 class ApexRecon:
-    def __init__(self, target, discord_webhook=None):
+    def __init__(self, target, args):
         self.target = target
-        self.discord_webhook = discord_webhook
+        self.args = args
         self.timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M')
-        self.output_dir = f"ApexResults/{self.target}_{self.timestamp}"
         
-        # الملفات
+        base_dir = self.args.output if self.args.output else "ApexResults"
+        self.output_dir = os.path.join(base_dir, f"{self.target}_{self.timestamp}")
+        
         self.subs_file = os.path.join(self.output_dir, "subdomains.txt")
         self.live_file = os.path.join(self.output_dir, "live_hosts.txt")
         self.vuln_file = os.path.join(self.output_dir, "nuclei_vulns.txt")
@@ -38,189 +35,163 @@ class ApexRecon:
 
     def print_banner(self):
         console.print(Panel.fit(
-            f"[bold cyan]🎯 Target:[/bold cyan] [bold white]{self.target}[/bold white]\n"
-            f"[bold cyan]📂 Output:[/bold cyan] [bold yellow]{self.output_dir}[/bold yellow]\n"
-            f"[bold cyan]🕒 Time:[/bold cyan] [bold white]{self.timestamp}[/bold white]",
-            title="[bold green]🚀 ApexRecon v2.0[/bold green]",
-            subtitle="[italic]Automated Intelligent Recon[/italic]"
+            f"[bold cyan]🎯 Target:[/bold cyan] [white]{self.target}[/white]\n"
+            f"[bold cyan]⚡ Threads:[/bold cyan] [yellow]{self.args.threads}[/yellow] | "
+            f"[bold cyan]🚀 Rate Limit:[/bold cyan] [yellow]{self.args.rate_limit}[/yellow]\n"
+            f"[bold cyan]📂 Output:[/bold cyan] [white]{self.output_dir}[/white]",
+            title="[bold green]🚀 ApexRecon v2.2[/bold green]",
+            subtitle="[italic]Flexibility & Power Update[/italic]"
         ))
 
     def setup_dirs(self):
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
+    def run_command(self, cmd):
+        try:
+            stdout_setting = None if self.args.verbose else subprocess.DEVNULL
+            stderr_setting = None if self.args.verbose else subprocess.DEVNULL
+            subprocess.run(cmd, shell=True, check=True, stdout=stdout_setting, stderr=stderr_setting)
+        except subprocess.CalledProcessError:
+            pass
+
     def check_waf(self):
-        """ميزة ذكية: فحص هل الموقع محمي بـ WAF قبل الهجوم"""
-        console.print(f"\n[bold yellow][*] Checking for WAF (Web Application Firewall)...[/bold yellow]")
         try:
             r = requests.get(f"http://{self.target}", timeout=5)
             headers = r.headers
-            waf_name = "None"
-            
-            if "CF-RAY" in headers: waf_name = "Cloudflare"
-            elif "Server" in headers and "Akamai" in headers["Server"]: waf_name = "Akamai"
-            elif "X-Sucuri-ID" in headers: waf_name = "Sucuri"
-            
-            if waf_name != "None":
-                console.print(f"[bold red][!] WAF DETECTED: {waf_name}[/bold red]")
-                console.print("[dim]⚠️  Nuclei scan will be slower to avoid bans.[/dim]")
-                return True
-            else:
-                console.print(f"[bold green][√] No obvious WAF detected. Going Full Speed![/bold green]")
-                return False
-        except:
-            console.print("[dim][!] Could not reach target main page.[/dim]")
-            return False
-
-    def run_command(self, cmd):
-        try:
-            # تم استخدام DEVNULL لإخفاء المخرجات الطويلة وجعل الواجهة نظيفة
-            # إذا كنت تواجه مشاكل في الأدوات، يمكنك إزالة stdout=... لرؤية الخطأ
-            subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except subprocess.CalledProcessError:
-            pass
+            if "CF-RAY" in headers: return "Cloudflare"
+            if "Server" in headers and "Akamai" in headers["Server"]: return "Akamai"
+            if "X-Sucuri-ID" in headers: return "Sucuri"
+        except: pass
+        return None
 
     def start_recon(self):
         self.setup_dirs()
         self.print_banner()
-        
-        has_waf = self.check_waf()
 
-        # --- 1. Subdomain Hunting ---
-        unique_subs = set() # تعريف مبدئي لتجنب الأخطاء
-        
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
-            task1 = progress.add_task("[cyan]Harvesting Subdomains...", total=None)
-            
-            # Subfinder
-            self.run_command(f"subfinder -d {self.target} -silent > {self.output_dir}/raw_subs.txt")
-            # Assetfinder
-            self.run_command(f"assetfinder --subs-only {self.target} >> {self.output_dir}/raw_subs.txt")
-            
-            # Cleaning
-            try:
+        unique_subs = set()
+        live_count = 0
+        vuln_count = 0
+
+        if not self.args.no_subs:
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
+                progress.add_task("[cyan]Harvesting Subdomains...", total=None)
+                
+                self.run_command(f"subfinder -d {self.target} -silent -t {self.args.threads} > {self.output_dir}/raw_subs.txt")
+                self.run_command(f"assetfinder --subs-only {self.target} >> {self.output_dir}/raw_subs.txt")
+                
                 if os.path.exists(f"{self.output_dir}/raw_subs.txt"):
                     with open(f"{self.output_dir}/raw_subs.txt", "r") as f:
                         unique_subs = set(f.read().splitlines())
-            except: pass
-            
-            with open(self.subs_file, "w") as f:
-                f.write("\n".join(unique_subs))
-                
-            progress.stop()
+                    with open(self.subs_file, "w") as f:
+                        f.write("\n".join(unique_subs))
 
-        console.print(f"[bold green][√] Found {len(unique_subs)} unique subdomains.[/bold green]")
+            console.print(f"[bold green][√] Found {len(unique_subs)} unique subdomains.[/bold green]")
+        else:
+            console.print("[yellow][!] Skipping Subdomain Discovery (--no-subs). Assuming target is a host.[/yellow]")
+            with open(self.subs_file, "w") as f: f.write(self.target)
+            unique_subs = {self.target}
 
-        # --- 2. Live Probing (Httpx) ---
-        live_count = 0 # تعريف المتغير بقيمة صفر مبدئياً (الإصلاح الأول)
-        
         if len(unique_subs) > 0:
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
                 progress.add_task("[magenta]Probing Live Hosts (Httpx)...", total=None)
-                self.run_command(f"httpx -l {self.subs_file} -title -tech-detect -status-code -silent -o {self.live_file}")
+                self.run_command(f"httpx -l {self.subs_file} -title -tech-detect -status-code -silent -threads {self.args.threads} -o {self.live_file}")
             
-            try:
-                if os.path.exists(self.live_file):
-                    with open(self.live_file, "r") as f:
-                        live_count = len(f.readlines())
-            except: live_count = 0
+            if os.path.exists(self.live_file):
+                with open(self.live_file, "r") as f: live_count = len(f.readlines())
             console.print(f"[bold green][√] Found {live_count} live hosts.[/bold green]")
         else:
-            console.print("[bold red][!] No subdomains found. Skipping next steps.[/bold red]")
+            console.print("[red][!] No targets to probe.[/red]")
 
-        # --- 3. Vulnerability Scanning (Nuclei) ---
-        vuln_count = 0 # تعريف المتغير بقيمة صفر مبدئياً (الإصلاح الثاني - حل المشكلة)
-        
-        if live_count > 0:
-            console.print(f"\n[bold yellow][*] Starting Nuclei Scan (This is the heavy part)...[/bold yellow]")
+        if not self.args.no_vuln and live_count > 0:
+            waf_name = self.check_waf()
+            if waf_name:
+                console.print(f"[bold red][!] WAF Detected: {waf_name}. Reducing speed automatically.[/bold red]")
+                current_rate = 50 
+            else:
+                current_rate = self.args.rate_limit
+
+            console.print(f"[yellow][*] Starting Nuclei (Rate Limit: {current_rate})...[/yellow]")
             
-            # استخراج الروابط فقط
             urls_file = os.path.join(self.output_dir, "urls.txt")
-            try:
+            if os.path.exists(self.live_file):
                 with open(self.live_file, "r") as f:
                     urls = [line.split()[0] for line in f.readlines()]
-                with open(urls_file, "w") as f:
-                    f.write("\n".join(urls))
-            except: pass
+                with open(urls_file, "w") as f: f.write("\n".join(urls))
 
-            # تعديل السرعة
-            rate_limit = "-rl 150" if not has_waf else "-rl 50"
-            
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=False) as progress:
                 progress.add_task("[red]Firing Nuclei Engine...", total=None)
-                self.run_command(f"nuclei -l {urls_file} -t nuclei-templates -severity critical,high,medium {rate_limit} -silent -o {self.vuln_file}")
+                self.run_command(f"nuclei -l {urls_file} -t nuclei-templates -severity critical,high,medium -rl {current_rate} -silent -o {self.vuln_file}")
 
-            # فحص النتائج
             if os.path.exists(self.vuln_file):
-                try:
-                    with open(self.vuln_file, "r") as f:
-                        vuln_count = len(f.readlines())
-                except: vuln_count = 0
-
+                with open(self.vuln_file, "r") as f: vuln_count = len(f.readlines())
+            
             if vuln_count > 0:
-                console.print(f"[bold red on white]🚨 DANGER: Found {vuln_count} Vulnerabilities! Check Report![/bold red on white]")
+                console.print(f"[bold red on white]🚨 DANGER: Found {vuln_count} Vulnerabilities![/bold red on white]")
                 self.send_discord(f"🚨 **ApexRecon Alert:** Found {vuln_count} vulnerabilities on {self.target}!")
             else:
-                console.print("[bold green][√] No Critical/High vulnerabilities found.[/bold green]")
-                self.send_discord(f"✅ **ApexRecon:** Scan finished on {self.target}. Clean (so far).")
+                console.print("[green][√] Clean scan. No Critical/High vulns.[/green]")
+                self.send_discord(f"✅ **ApexRecon:** Scan clean for {self.target}.")
+        
+        elif self.args.no_vuln:
+            console.print("[yellow][!] Skipping Vulnerability Scan (--no-vuln).[/yellow]")
 
-        # توليد التقرير (الآن سيعمل دون أخطاء لأن المتغيرات معرفة دائماً)
-        self.generate_html_report(len(unique_subs), live_count, vuln_count)
+        self.generate_report(len(unique_subs), live_count, vuln_count)
 
-    def generate_html_report(self, subs, live, vulns):
-        """ميزة فريدة: توليد تقرير HTML بسيط"""
-        html_content = f"""
-        <html>
-        <head>
-            <title>ApexRecon - {self.target}</title>
-            <style>
-                body {{ font-family: Arial; background: #111; color: #fff; padding: 20px; }}
-                .card {{ background: #222; padding: 20px; margin: 10px; border-radius: 8px; border-left: 5px solid #00ff41; }}
-                h1 {{ color: #00ff41; }}
-                .stat {{ font-size: 20px; }}
-                a {{ color: #00ff41; text-decoration: none; }}
-            </style>
-        </head>
-        <body>
-            <h1>🚀 ApexRecon Report: {self.target}</h1>
-            <p>Date: {self.timestamp}</p>
-            <div class="card">
-                <h3>Stats</h3>
-                <p class="stat">🌐 Subdomains: {subs}</p>
-                <p class="stat">🟢 Live Hosts: {live}</p>
-                <p class="stat">🔥 Vulnerabilities: {vulns}</p>
-            </div>
-            <div class="card">
-                <h3>Files</h3>
-                <p>📂 <a href="live_hosts.txt">Live Hosts List</a></p>
-                <p>📂 <a href="nuclei_vulns.txt">Vulnerabilities List</a></p>
-            </div>
-        </body>
-        </html>
-        """
+    def generate_report(self, subs, live, vulns):
+        html_content = f"""<html><body style='background:#111;color:#fff;font-family:sans-serif;padding:20px'>
+        <h1 style='color:#0f0'>ApexRecon Report: {self.target}</h1>
+        <div style='background:#222;padding:20px;border-radius:10px;border-left:5px solid #0f0'>
+        <h3>Stats</h3><p>🌐 Subdomains: {subs}</p><p>🟢 Live Hosts: {live}</p><p>🔥 Vulns: {vulns}</p>
+        </div></body></html>"""
         try:
-            with open(self.html_report, "w") as f:
-                f.write(html_content)
-            console.print(f"\n[bold white]📄 HTML Report Generated:[/bold white] [underline]{self.html_report}[/underline]")
-        except:
-            console.print("[red][!] Could not write HTML report.[/red]")
+            with open(self.html_report, "w") as f: f.write(html_content)
+            console.print(f"\n[bold white]📄 HTML Report:[/bold white] [underline]{self.html_report}[/underline]")
+        except: pass
 
-    def send_discord(self, message):
-        """ميزة فريدة: إرسال تنبيه للديسكورد"""
-        if self.discord_webhook:
-            data = {"content": message}
-            try:
-                requests.post(self.discord_webhook, json=data)
+    def send_discord(self, msg):
+        if self.args.webhook:
+            try: requests.post(self.args.webhook, json={"content": msg})
             except: pass
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ApexRecon")
-    parser.add_argument("-t", "--target", required=True, help="Target Domain")
-    parser.add_argument("-w", "--webhook", help="Discord Webhook URL (Optional)")
+    parser = argparse.ArgumentParser(description="ApexRecon v2.2 - Advanced Recon Framework")
+    
+    target_group = parser.add_mutually_exclusive_group(required=True)
+    target_group.add_argument("-t", "--target", help="Single Target Domain (e.g., tesla.com)")
+    target_group.add_argument("-l", "--list", help="File containing list of targets")
+
+    parser.add_argument("-o", "--output", help="Custom Output Directory", default="ApexResults")
+    parser.add_argument("-w", "--webhook", help="Discord Webhook URL")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show tool output (Debug mode)")
+    
+    parser.add_argument("--threads", type=int, default=40, help="Number of threads for Subfinder/Httpx (Default: 40)")
+    parser.add_argument("--rate-limit", type=int, default=150, help="Rate limit for Nuclei (Default: 150)")
+
+    parser.add_argument("--no-subs", action="store_true", help="Skip subdomain enumeration (Treat target as host)")
+    parser.add_argument("--no-vuln", action="store_true", help="Skip vulnerability scanning (Nuclei)")
+
     args = parser.parse_args()
 
-    try:
-        scanner = ApexRecon(args.target, args.webhook)
-        scanner.start_recon()
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Aborted![/bold red]")
+    console.print("[bold green]🚀 ApexRecon v2.2 Initialized...[/bold green]")
+
+    targets = []
+    if args.target:
+        targets.append(args.target)
+    elif args.list:
+        if os.path.exists(args.list):
+            with open(args.list, "r") as f:
+                targets = [line.strip() for line in f if line.strip()]
+            console.print(f"[bold cyan][*] Loaded {len(targets)} targets from list.[/bold cyan]")
+        else:
+            console.print(f"[bold red][!] File not found: {args.list}[/bold red]")
+            sys.exit(1)
+
+    for target in targets:
+        try:
+            scanner = ApexRecon(target, args)
+            scanner.start_recon()
+            console.print(f"[dim]{'-'*50}[/dim]\n")
+        except KeyboardInterrupt:
+            console.print("\n[bold red]Aborted by user![/bold red]")
+            sys.exit(0)
