@@ -74,6 +74,8 @@ class ApexRecon:
 
     def run_command(self, cmd):
         try:
+            # تم استخدام DEVNULL لإخفاء المخرجات الطويلة وجعل الواجهة نظيفة
+            # إذا كنت تواجه مشاكل في الأدوات، يمكنك إزالة stdout=... لرؤية الخطأ
             subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
             pass
@@ -84,7 +86,9 @@ class ApexRecon:
         
         has_waf = self.check_waf()
 
-        # 1. Subdomain Hunting
+        # --- 1. Subdomain Hunting ---
+        unique_subs = set() # تعريف مبدئي لتجنب الأخطاء
+        
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
             task1 = progress.add_task("[cyan]Harvesting Subdomains...", total=None)
             
@@ -94,10 +98,10 @@ class ApexRecon:
             self.run_command(f"assetfinder --subs-only {self.target} >> {self.output_dir}/raw_subs.txt")
             
             # Cleaning
-            unique_subs = set()
             try:
-                with open(f"{self.output_dir}/raw_subs.txt", "r") as f:
-                    unique_subs = set(f.read().splitlines())
+                if os.path.exists(f"{self.output_dir}/raw_subs.txt"):
+                    with open(f"{self.output_dir}/raw_subs.txt", "r") as f:
+                        unique_subs = set(f.read().splitlines())
             except: pass
             
             with open(self.subs_file, "w") as f:
@@ -107,46 +111,51 @@ class ApexRecon:
 
         console.print(f"[bold green][√] Found {len(unique_subs)} unique subdomains.[/bold green]")
 
-        # 2. Live Probing (Httpx)
+        # --- 2. Live Probing (Httpx) ---
+        live_count = 0 # تعريف المتغير بقيمة صفر مبدئياً (الإصلاح الأول)
+        
         if len(unique_subs) > 0:
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
                 progress.add_task("[magenta]Probing Live Hosts (Httpx)...", total=None)
-                # حفظ المخرجات كملف نصي عادي وكـ JSON للتقرير
                 self.run_command(f"httpx -l {self.subs_file} -title -tech-detect -status-code -silent -o {self.live_file}")
             
-            # عد الأحياء
             try:
-                with open(self.live_file, "r") as f:
-                    live_count = len(f.readlines())
+                if os.path.exists(self.live_file):
+                    with open(self.live_file, "r") as f:
+                        live_count = len(f.readlines())
             except: live_count = 0
             console.print(f"[bold green][√] Found {live_count} live hosts.[/bold green]")
         else:
-            console.print("[bold red][!] No subdomains found. Exiting.[/bold red]")
-            return
+            console.print("[bold red][!] No subdomains found. Skipping next steps.[/bold red]")
 
-        # 3. Vulnerability Scanning (Nuclei)
+        # --- 3. Vulnerability Scanning (Nuclei) ---
+        vuln_count = 0 # تعريف المتغير بقيمة صفر مبدئياً (الإصلاح الثاني - حل المشكلة)
+        
         if live_count > 0:
             console.print(f"\n[bold yellow][*] Starting Nuclei Scan (This is the heavy part)...[/bold yellow]")
             
-            # استخراج الروابط فقط من نتائج Httpx
+            # استخراج الروابط فقط
             urls_file = os.path.join(self.output_dir, "urls.txt")
-            with open(self.live_file, "r") as f:
-                urls = [line.split()[0] for line in f.readlines()]
-            with open(urls_file, "w") as f:
-                f.write("\n".join(urls))
+            try:
+                with open(self.live_file, "r") as f:
+                    urls = [line.split()[0] for line in f.readlines()]
+                with open(urls_file, "w") as f:
+                    f.write("\n".join(urls))
+            except: pass
 
-            # تعديل سرعة الفحص بناء على الـ WAF
+            # تعديل السرعة
             rate_limit = "-rl 150" if not has_waf else "-rl 50"
             
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=False) as progress:
                 progress.add_task("[red]Firing Nuclei Engine...", total=None)
                 self.run_command(f"nuclei -l {urls_file} -t nuclei-templates -severity critical,high,medium {rate_limit} -silent -o {self.vuln_file}")
 
-            # التحقق من الثغرات
-            vuln_count = 0
+            # فحص النتائج
             if os.path.exists(self.vuln_file):
-                with open(self.vuln_file, "r") as f:
-                    vuln_count = len(f.readlines())
+                try:
+                    with open(self.vuln_file, "r") as f:
+                        vuln_count = len(f.readlines())
+                except: vuln_count = 0
 
             if vuln_count > 0:
                 console.print(f"[bold red on white]🚨 DANGER: Found {vuln_count} Vulnerabilities! Check Report![/bold red on white]")
@@ -155,6 +164,7 @@ class ApexRecon:
                 console.print("[bold green][√] No Critical/High vulnerabilities found.[/bold green]")
                 self.send_discord(f"✅ **ApexRecon:** Scan finished on {self.target}. Clean (so far).")
 
+        # توليد التقرير (الآن سيعمل دون أخطاء لأن المتغيرات معرفة دائماً)
         self.generate_html_report(len(unique_subs), live_count, vuln_count)
 
     def generate_html_report(self, subs, live, vulns):
@@ -168,6 +178,7 @@ class ApexRecon:
                 .card {{ background: #222; padding: 20px; margin: 10px; border-radius: 8px; border-left: 5px solid #00ff41; }}
                 h1 {{ color: #00ff41; }}
                 .stat {{ font-size: 20px; }}
+                a {{ color: #00ff41; text-decoration: none; }}
             </style>
         </head>
         <body>
@@ -187,9 +198,12 @@ class ApexRecon:
         </body>
         </html>
         """
-        with open(self.html_report, "w") as f:
-            f.write(html_content)
-        console.print(f"\n[bold white]📄 HTML Report Generated:[/bold white] [underline]{self.html_report}[/underline]")
+        try:
+            with open(self.html_report, "w") as f:
+                f.write(html_content)
+            console.print(f"\n[bold white]📄 HTML Report Generated:[/bold white] [underline]{self.html_report}[/underline]")
+        except:
+            console.print("[red][!] Could not write HTML report.[/red]")
 
     def send_discord(self, message):
         """ميزة فريدة: إرسال تنبيه للديسكورد"""
